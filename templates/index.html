@@ -3,58 +3,192 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upload CCTV Video</title>
+  <title>anomaly-detection-in-cctv</title>
+  <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='assets/logo.jpg') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    body {
-      background: linear-gradient(135deg, #111, #333);
-      color: white;
-      font-family: 'Poppins', sans-serif;
-      text-align: center;
-      padding-top: 100px;
-    }
-    .upload-box {
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 20px;
-      padding: 40px;
-      box-shadow: 0 0 20px rgba(255,255,255,0.1);
-      width: 50%;
-      margin: auto;
-    }
-    .spinner-border {
-      display: none;
-      margin-top: 20px;
-    }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-  <div class="upload-box">
-    <h2>🎥 CCTV Anomaly Detection</h2>
-    <p>Upload your video and let the system analyze for anomalies </p>
+  <div class="page-wrap">
+    <div class="card-box text-center">
+      <div class="title">Anomaly Detection</div>
+      <div class="subtitle">Upload your video and analyze anomalies</div>
 
-    <form id="uploadForm" action="/upload" method="POST" enctype="multipart/form-data">
-      <div class="mb-3">
-        <input type="file" name="video" accept="video/*" class="form-control" required>
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div id="authStatus" class="small-muted">Checking login...</div>
+        <button id="logoutBtn" type="button" class="btn btn-outline-light btn-sm">Logout</button>
       </div>
-      <button type="submit" class="btn btn-warning">Analyze Video</button>
-    </form>
 
-    <!-- Loading Spinner -->
-    <div class="spinner-border text-warning" role="status" id="loadingSpinner">
-      <span class="visually-hidden">Analyzing...</span>
+      <hr class="soft">
+
+      <form id="uploadForm" enctype="multipart/form-data">
+        <div class="mb-3">
+          <input type="file" name="video" accept="video/*" class="form-control" required>
+        </div>
+        <button type="submit" class="btn btn-accent">Analyze Video</button>
+      </form>
+
+      <div class="spinner-border text-warning mt-3" role="status" id="loadingSpinner" style="display:none;">
+        <span class="visually-hidden">Analyzing...</span>
+      </div>
+      <p id="loadingText" class="mt-2" style="display:none;">Analyzing video... please wait...</p>
+      <div id="errBox" class="mt-3 text-danger"></div>
     </div>
-
-    <p id="loadingText" style="display:none; margin-top:15px;">⏳ Analyzing video... please wait...</p>
   </div>
 
-  <script>
-    const form = document.getElementById("uploadForm");
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getAuth, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+    // FCM (Web Push)
+    import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBP2qiP9xOq2n-ueg48egQHK9qlteUMP5o",
+      authDomain: "anomaly-detection-in-cctv.firebaseapp.com",
+      projectId: "anomaly-detection-in-cctv",
+      storageBucket: "anomaly-detection-in-cctv.firebasestorage.app",
+      messagingSenderId: "1016994415144",
+      appId: "1:1016994415144:web:070ba602553c0c3c9f6b1d",
+      measurementId: "G-ZJXZ7PVV63"
+    };
+
+    // === Firebase init ===
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    const authStatus = document.getElementById("authStatus");
+    const errBox = document.getElementById("errBox");
     const spinner = document.getElementById("loadingSpinner");
     const loadingText = document.getElementById("loadingText");
 
-    form.addEventListener("submit", () => {
+    // === Auth guard ===
+    const token = sessionStorage.getItem("idToken");
+    if (!token) {
+      window.location.replace("/login");
+    } else {
+      authStatus.textContent = "Logged in";
+    }
+
+    // === Logout ===
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      sessionStorage.removeItem("idToken");
+      try { await signOut(auth); } catch (e) {}
+      window.location.replace("/login");
+    });
+
+    // === FCM setup ===
+    async function enablePushNotifications() {
+      // 1) Ask permission
+      if (!("Notification" in window)) {
+        console.log("Notifications not supported in this browser.");
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        console.log("Notification permission not granted.");
+        return;
+      }
+
+      // 2) Register service worker (recommended)
+      // IMPORTANT: make sure your Flask serves this at /firebase-messaging-sw.js
+      let swReg = null;
+      if ("serviceWorker" in navigator) {
+        swReg = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+      }
+
+      // 3) Get FCM token using VAPID public key
+      const messaging = getMessaging(app);
+      const vapidKey = "BKvsTaHaPMTpaONfNPjYeHXdFU93znh_PpkL9x8pe_KvUdmUjW_raXpbTWCVwVmu99PePNDo_pGyEfAUisTPoow";
+
+      const fcmToken = await getToken(messaging, {
+        vapidKey,
+        serviceWorkerRegistration: swReg
+      });
+
+      if (!fcmToken) {
+        console.log("No FCM token returned.");
+        return;
+      }
+
+      // 4) Send token to backend so it can subscribe to topic
+      const idToken = sessionStorage.getItem("idToken");
+      if (!idToken) return;
+
+      const res = await fetch("/save-token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ token: fcmToken })
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        console.log("save-token failed:", t);
+      } else {
+        console.log("FCM token saved & subscribed.");
+      }
+
+      // Foreground message handler
+      onMessage(messaging, (payload) => {
+        console.log("FCM foreground message:", payload);
+        // Optional: show something on UI
+        // errBox.textContent = payload?.notification?.body || "Notification received";
+      });
+    }
+
+    // Call once after page load (user will see permission popup)
+    enablePushNotifications().catch((e) => console.log("FCM init error:", e));
+
+    // === Upload ===
+    document.getElementById("uploadForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errBox.textContent = "";
+
+      const idToken = sessionStorage.getItem("idToken");
+      if (!idToken) {
+        window.location.replace("/login");
+        return;
+      }
+
       spinner.style.display = "inline-block";
       loadingText.style.display = "block";
+
+      try {
+        const formData = new FormData(e.target);
+
+        const res = await fetch("/upload", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${idToken}` },
+          body: formData,
+        });
+
+        if (res.status === 401) {
+          sessionStorage.removeItem("idToken");
+          try { await signOut(auth); } catch (e) {}
+          window.location.replace("/login");
+          return;
+        }
+
+        const html = await res.text();
+        if (!res.ok) {
+          spinner.style.display = "none";
+          loadingText.style.display = "none";
+          errBox.textContent = html || ("Upload failed with status " + res.status);
+          return;
+        }
+
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (err) {
+        spinner.style.display = "none";
+        loadingText.style.display = "none";
+        errBox.textContent = err?.message || "Upload failed";
+      }
     });
   </script>
 </body>

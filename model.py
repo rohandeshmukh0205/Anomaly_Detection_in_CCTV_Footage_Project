@@ -9,11 +9,14 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D
 
 def build_autoencoder():
     model = Sequential()
+
+    # Encoder
     model.add(Conv2D(32, (3, 3), activation="relu", padding="same", input_shape=(64, 64, 1)))
     model.add(MaxPooling2D((2, 2), padding="same"))
     model.add(Conv2D(16, (3, 3), activation="relu", padding="same"))
     model.add(MaxPooling2D((2, 2), padding="same"))
 
+    # Decoder
     model.add(Conv2D(16, (3, 3), activation="relu", padding="same"))
     model.add(UpSampling2D((2, 2)))
     model.add(Conv2D(32, (3, 3), activation="relu", padding="same"))
@@ -42,6 +45,9 @@ def train_autoencoder(video_path, max_frames=500):
 
     cap.release()
 
+    if len(frames) == 0:
+        return build_autoencoder()
+
     frames = np.array(frames, dtype="float32") / 255.0
     frames = np.expand_dims(frames, axis=-1)
 
@@ -50,15 +56,17 @@ def train_autoencoder(video_path, max_frames=500):
     return autoencoder
 
 
-def detect_anomalies(video_path, autoencoder, threshold=0.01):
+def detect_anomalies(video_path, autoencoder, threshold=0.01, graph_rel_path="anomaly_graph.png"):
     cap = cv2.VideoCapture(video_path)
+
     fps = cap.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 0:
         fps = 25.0
 
-    frame_interval = max(int(fps * 2), 1)  # 1 frame every 2 seconds
-    frame_count = 0
+    # analyze 1 frame every 2 seconds
+    frame_interval = max(int(fps * 2), 1)
 
+    frame_count = 0
     anomaly_frames = []
     errors = []
 
@@ -85,6 +93,7 @@ def detect_anomalies(video_path, autoencoder, threshold=0.01):
 
     cap.release()
 
+    # Convert frame indices to (start, end) seconds
     timestamps = []
     if anomaly_frames:
         start = anomaly_frames[0]
@@ -95,7 +104,11 @@ def detect_anomalies(video_path, autoencoder, threshold=0.01):
                 start = anomaly_frames[i]
         timestamps.append((round(start / fps, 2), round(anomaly_frames[-1] / fps, 2)))
 
+    # Save error graph
     os.makedirs("static", exist_ok=True)
+    full_graph_path = os.path.join("static", graph_rel_path).replace("\\", "/")
+    os.makedirs(os.path.dirname(full_graph_path), exist_ok=True)
+
     plt.figure(figsize=(8, 4))
     x_values = np.arange(len(errors)) * 2  # seconds
     plt.plot(x_values, errors, color="orange", label="Reconstruction Error")
@@ -104,14 +117,12 @@ def detect_anomalies(video_path, autoencoder, threshold=0.01):
     plt.xlabel("Time (seconds)")
     plt.ylabel("Reconstruction Error")
     plt.legend()
-
-    graph_path = os.path.join("static", "anomaly_graph.png")
-    plt.savefig(graph_path)
+    plt.savefig(full_graph_path)
     plt.close()
 
     return {
         "timestamps": timestamps,
-        "graph_path": "anomaly_graph.png",
+        "graph_path": graph_rel_path.replace("\\", "/"),
         "threshold": threshold,
         "is_anomaly_detected": "Yes" if len(timestamps) > 0 else "No",
     }
