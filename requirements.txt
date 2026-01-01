@@ -6,3 +6,4 @@ tensorflow
 werkzeug
 matplotlib
 firebase-admin
+reportlab

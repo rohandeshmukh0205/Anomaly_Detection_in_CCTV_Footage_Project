@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 static/uploads/
 serviceAccountKey.json
+static/graphs/
+static/reports/

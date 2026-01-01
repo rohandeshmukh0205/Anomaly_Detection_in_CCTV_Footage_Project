@@ -47,11 +47,53 @@
         <p class="small-muted">No anomalies detected.</p>
       {% endif %}
 
+      <button onclick="downloadPDF()" class="btn btn-primary mt-3">
+        Download PDF Report
+      </button>
+
       <div class="mt-3 d-flex gap-2 justify-content-center">
         <a href="/" class="btn btn-accent">Upload Another Video</a>
-        <a href="/login" class="btn btn-outline-light">Login</a>
+        <a href="/login" class="btn btn-outline-light">Logout</a>
       </div>
     </div>
   </div>
+
+  <script>
+    async function downloadPDF() {
+      const idToken = sessionStorage.getItem("idToken");
+
+      const res = await fetch("/generate-pdf", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          filename: "{{ video_filename }}",
+          is_anomaly_detected: "{{ is_anomaly_detected }}",
+          threshold: {{ threshold }},
+          timestamps: {{ timestamps | tojson }},
+          graph_url: "{{ graph_url }}"
+        })
+      });
+
+      if (!res.ok) {
+        alert("PDF generation failed");
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "{{ video_filename }}".replace(/\.[^/.]+$/, "") + "_report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      window.URL.revokeObjectURL(url);
+    }
+  </script>
 </body>
 </html>
